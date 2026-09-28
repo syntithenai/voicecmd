@@ -49,18 +49,20 @@ class WhisperClient:
         self.hedge_after_s = hedge_after_ms / 1000.0
         self.base_prompt = prompt or DEFAULT_PROMPT
         self.prompt = self.base_prompt
+        self._vocab: dict[str, list[str]] = {}
         self.pad_ms = pad_ms
         self.timeout = timeout
         self.hedged = 0
         self.fallback_wins = 0
 
-    def set_vocabulary(self, names: list[str]) -> None:
-        """Append device names so whisper spells them consistently.
+    def set_vocabulary(self, names: list[str], group: str = "Devices") -> None:
+        """Append names (devices, tunebook tags and books) so whisper spells them consistently.
 
         whisper keeps the end of an over-long prompt, so the names go last.
         """
-        names = [n for n in names if n][:40]
-        self.prompt = f"{self.base_prompt} Devices: {', '.join(names)}." if names else self.base_prompt
+        self._vocab[group] = [n for n in names if n][:40]
+        extra = " ".join(f"{g}: {', '.join(v)}." for g, v in self._vocab.items() if v)
+        self.prompt = f"{self.base_prompt} {extra}" if extra else self.base_prompt
 
     def transcribe(self, pcm: np.ndarray, prompt: str | None = None) -> Transcript:
         pad = np.zeros(self.pad_ms * SAMPLE_RATE // 1000, dtype=np.int16)

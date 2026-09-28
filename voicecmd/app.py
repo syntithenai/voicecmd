@@ -52,6 +52,7 @@ class VoiceApp:
         self.router = Router([h for h in handlers if h is not None], self.llm)
         if self.devices:
             self.devices.on_names_changed(self.whisper.set_vocabulary)
+        self.music.tunebook.on_vocabulary_changed(lambda names: self.whisper.set_vocabulary(names, "Tunebook"))
         self.ghost = GhostGate(ROOT / "hallucinations" / "en.txt", is_supported_command=self.router.is_supported)
         self.player = Player(settings.audio_sink)
         self.tts = TtsClient(settings.tts_url, settings.tts_voice, settings.tts_model, settings.tts_speed,
@@ -175,6 +176,7 @@ class VoiceApp:
             "whisper_fallback_wins": self.whisper.fallback_wins,
             "tts_ok": self.tts.healthy(),
             "devices": self.devices.status() if self.devices else None,
+            "tunebook": self.music.tunebook.status(),
             "timers": [
                 {"kind": t.kind, "label": t.label, "due_in_s": int(t.due - now)} for t in self.timers.timers
             ],

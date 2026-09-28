@@ -57,6 +57,12 @@ Say **"hey Jarvis"**, wait for the chime (or just keep talking), then:
 - **Music**: "play some jazz", "play Kind of Blue by Miles Davis", "pause", "resume", "skip",
   "stop the music", "turn it up/down", "volume 40 percent", "mute", "what's playing".
   Music is ducked while listening and speaking.
+- **Tunebook** (your abc2book tags and books): "play the tag charlotte setlist", "play the charlotte
+  setlist", "play the eurosession book", "play tunes from the celtic book". Tags play in tunebook
+  (alphabetical) order and books are shuffled. Only tunes with a YouTube or audio link play; tunes
+  with just notation are skipped. The tunebook web app pushes a compact copy to the home resolver
+  (`/snapcast-playback/tunebook`) when it loads or saves. If no tag or book matches, the request
+  becomes an ordinary music-collection search.
 - **Timers/alarms/reminders** (persisted in `data/timers.json`): "set a pasta timer for 12 minutes",
   "timer for an hour and a half", "set an alarm for 6:30 tomorrow morning", "wake me at half past
   seven", "remind me in 20 minutes to check the oven", "how long left", "cancel the pasta timer",

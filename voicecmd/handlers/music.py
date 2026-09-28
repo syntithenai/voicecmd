@@ -12,6 +12,7 @@ from typing import Any
 
 from ..http import HttpError, get_json, post_json, request
 from ..intents import Intent, Reply
+from .tunebook import Tunebook
 
 PAUSE_RE = re.compile(r"^(?:pause|hold)(?: (?:the )?(?:music|song|track|it|playback))?$")
 RESUME_RE = re.compile(
@@ -43,6 +44,17 @@ PLAY_QUERY_RE = re.compile(
     r"^(?:play|put on|queue(?: up)?|listen to|i want to hear)\s+(?:me\s+)?(?:some\s+)?"
     r"(?:music by |songs? by |stuff by |something by |the album |album |the song |song |the track |track )?(.+?)$"
 )
+_PLAY = r"^(?:play|put on|queue(?: up)?|listen to|start)\s+(?:me\s+)?"
+_KIND = r"(tag|book|tune ?book|song ?book|setlist|set list)"
+COLLECTION_RES = [
+    # "play the tag charlotte setlist", "play book eurosession"
+    (re.compile(_PLAY + r"(?:the\s+|my\s+)?(tag|book|tune ?book|song ?book)\s+(?:called\s+|named\s+)?(.+)$"), "kind_first"),
+    # "play the eurosession book", "play tunes from the celtic book", "play the charlotte setlist"
+    (re.compile(_PLAY + r"(?:(?:some\s+)?(?:tunes|songs|music)\s+(?:from|in|on)\s+)?(?:the\s+|my\s+)?(.+?)\s+" + _KIND + r"$"),
+     "kind_last"),
+    # "play songs tagged charlotte setlist"
+    (re.compile(_PLAY + r"(?:(?:the\s+|some\s+)?(?:tunes|songs|music)\s+)?tagged\s+(?:with\s+|as\s+)?(.+)$"), "tagged"),
+]
 GENERIC_QUERIES = {"music", "some music", "something", "anything", "a song", "songs", "tunes", "some tunes"}
 MIN_TRACK_S = 45
 BROAD_SEARCH_LIMIT = 60
@@ -68,6 +80,28 @@ def pick_tracks(candidates: list[dict], broad: bool, limit: int, rng: random.Ran
     if broad:
         (rng or random).shuffle(picked)
     return picked[:limit]
+
+
+def parse_collection(nw: str) -> dict | None:
+    """{'kind': 'tag'|'book'|'', 'name', 'query'} for "play the X book/tag" style requests."""
+    for rx, form in COLLECTION_RES:
+        m = rx.match(nw)
+        if not m:
+            continue
+        if form == "kind_first":
+            kind, name = m.group(1), m.group(2)
+        elif form == "kind_last":
+            name, kind = m.group(1), m.group(2)
+        else:
+            kind, name = "tag", m.group(1)
+        name = re.sub(r"\s+(?:please|now)$", "", name.strip())
+        if kind in ("setlist", "set list"):
+            kind, name = "tag", f"{name} setlist"
+        kind = "book" if "book" in kind else kind
+        if name and name not in GENERIC_QUERIES:
+            query = PLAY_QUERY_RE.match(nw)
+            return {"kind": kind, "name": name, "query": query.group(1).strip() if query else name}
+    return None
 
 
 class SnapcastRpc:
@@ -146,6 +180,7 @@ class MusicHandler:
         self._stop = threading.Event()
         self._duck_lock = threading.Lock()
         self._ducked: dict[str, int] = {}
+        self.tunebook = Tunebook(self.base, headers=self._headers)
 
     @property
     def session_id(self) -> str | None:
@@ -192,6 +227,9 @@ class MusicHandler:
             return Intent("music", "now_playing")
         if RESUME_RE.match(n):
             return Intent("music", "resume")
+        collection = parse_collection(nw)
+        if collection:
+            return Intent("music", "play_collection", collection)
         m = PLAY_QUERY_RE.match(nw)
         if m:
             query = m.group(1).strip()
@@ -226,7 +264,7 @@ class MusicHandler:
         return list((data or {}).get("candidates") or [])
 
     def play_candidates(self, candidates: list[dict]) -> dict:
-        items = [
+        return self.play_items([
             {
                 "source": c.get("link"),
                 "sourceType": "",
@@ -236,21 +274,47 @@ class MusicHandler:
             }
             for c in candidates
             if c.get("link")
-        ]
+        ])
+
+    def play_items(self, items: list[dict]) -> dict:
         if not items:
             raise RuntimeError("no playable candidates")
         first = items[0]
         body = dict(first)
-        body["queue"] = items
+        body["queue"] = [{k: v for k, v in i.items() if k != "startSeconds"} for i in items]
         data = post_json(f"{self.base}/snapcast-playback/session", body, headers=self._headers(), timeout=60.0) or {}
         self.session_id = data.get("sessionId") or self.session_id
         self._paused_by_us = False
+        if len(items) > 1:
+            self._prefetch_next()
         return data
+
+    def _prefetch_next(self) -> None:
+        """Resolve the next queue item (e.g. a YouTube download) while the current one plays."""
+        sid = self.session_id
+        if not sid:
+            return
+
+        def run() -> None:
+            try:
+                post_json(f"{self.base}/snapcast-playback/session/{sid}/prefetch", {"count": 1},
+                          headers=self._headers(), timeout=120.0)
+            except Exception as exc:
+                print(f"music: prefetch failed: {exc}", flush=True)
+
+        threading.Thread(target=run, name="music-prefetch", daemon=True).start()
 
     # --- queue auto-advance (the resolver leaves advancing to its client) ---
 
     def start(self) -> None:
         threading.Thread(target=self._advance_loop, name="music-advance", daemon=True).start()
+        threading.Thread(target=self._tunebook_loop, name="tunebook-refresh", daemon=True).start()
+
+    def _tunebook_loop(self) -> None:
+        while True:
+            self.tunebook.refresh(force=True)
+            if self._stop.wait(self.tunebook.refresh_s):
+                return
 
     def _advance_loop(self) -> None:
         while not self._stop.wait(ADVANCE_POLL_S):
@@ -285,6 +349,8 @@ class MusicHandler:
         post_json(f"{self.base}/snapcast-playback/session/{sid}/next", {}, headers=self._headers(), timeout=60.0)
         print(f"music: advanced to queue item {int(status.get('queueIndex') or 0) + 2}/{status.get('queueLength')}",
               flush=True)
+        if int(status.get("queueIndex") or 0) + 2 < int(status.get("queueLength") or 0):
+            self._prefetch_next()
         return True
 
     # --- volume / ducking ---
@@ -340,8 +406,31 @@ class MusicHandler:
 
     # --- execute ---
 
+    def _play_collection(self, intent: Intent) -> Reply:
+        p = intent.params
+        self.tunebook.refresh()
+        found = self.tunebook.resolve(str(p.get("name") or ""), str(p.get("kind") or ""))
+        if not found:
+            if not self.tunebook.available:
+                print("music: tunebook not synced; searching the music collection instead", flush=True)
+            return self.execute(Intent("music", "play_query", {"query": p.get("query") or p.get("name") or ""},
+                                       intent.source))
+        kind, name = found
+        items, total = self.tunebook.queue_for(kind, name)
+        label = f"the {name} book" if kind == "book" else f"the {self.tunebook.tags.get(name, name)} tag"
+        if not items:
+            return Reply(f"None of the {total} tunes in {label} have a recording I can play.", ok=False)
+        self.play_items(items)
+        skipped = total - len(items)
+        text = f"Playing {label}, {len(items)} tunes, starting with {items[0]['title']}."
+        if skipped:
+            text += f" {skipped} without recordings skipped."
+        return Reply(text)
+
     def execute(self, intent: Intent) -> Reply:
         a, p = intent.action, intent.params
+        if a == "play_collection":
+            return self._play_collection(intent)
         if a == "play_query":
             query = str(p.get("query") or "")
             broad = not p.get("title") and not p.get("artist") and len(query.split()) <= 2

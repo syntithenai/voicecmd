@@ -1,4 +1,5 @@
 import random
+import time
 
 from voicecmd.handlers import music
 from voicecmd.handlers.music import MusicHandler, pick_tracks
@@ -42,7 +43,9 @@ def test_advances_when_track_finished(monkeypatch):
     h, posted = _handler(monkeypatch, {"isPlaying": False, "currentTime": 199.0, "duration": 200.0,
                                        "canGoNext": True, "queueIndex": 0, "queueLength": 5})
     assert h.advance_if_finished()
-    assert posted == ["http://resolver/snapcast-playback/session/s1/next"]
+    time.sleep(0.05)  # prefetch runs on its own thread
+    assert posted == ["http://resolver/snapcast-playback/session/s1/next",
+                      "http://resolver/snapcast-playback/session/s1/prefetch"]
 
 
 def test_advances_when_vbr_duration_overstates_length(monkeypatch):
