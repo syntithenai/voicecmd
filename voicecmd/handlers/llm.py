@@ -16,7 +16,8 @@ SYSTEM_PROMPT = (
     "short plain sentences with no markdown, lists, emoji or URLs. "
     "Use a tool whenever the user wants music played or controlled, a timer or alarm, or "
     "anything about conditions outside (temperature, cold, hot, rain, humidity, garden soil): "
-    "never invent weather readings, always call the weather tool. Convert durations exactly "
+    "never invent weather readings, always call the weather tool. Use the device tools to "
+    "switch or dim home devices and to check whether one is on or how much power it uses. Convert durations exactly "
     "(a quarter of an hour is 900 seconds). Otherwise answer briefly from general knowledge. "
     "If you don't know, say so. Temperatures are Celsius. Current local time: {now}."
 )
@@ -122,7 +123,50 @@ TOOLS = [
 ]
 
 
+def device_tools(names: list[str]) -> list[dict]:
+    """Device tools for the names the device registry knows right now (none if empty)."""
+    if not names:
+        return []
+    name_prop = {"type": "string", "enum": list(names), "description": "device name"}
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "device_control",
+                "description": "Switch a home device (smart plug or light) on or off, or set a light's brightness.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": name_prop,
+                        "action": {"type": "string", "enum": ["on", "off", "toggle"]},
+                        "brightness": {"type": "integer", "description": "0-100 percent, lights only"},
+                    },
+                    "required": ["name", "action"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "device_status",
+                "description": "Say whether a home device is on and how much power it is using.",
+                "parameters": {"type": "object", "properties": {"name": name_prop}, "required": ["name"]},
+            },
+        },
+    ]
+
+
 def tool_call_to_intent(name: str, args: dict) -> Intent | None:
+    if name in ("device_control", "device_status"):
+        device = str(args.get("name") or "").strip()
+        if not device:
+            return None
+        if name == "device_status":
+            return Intent("device", "status", {"name": device}, source="llm")
+        action = str(args.get("action") or "on").strip().lower()
+        if args.get("brightness") is not None and action != "off":
+            return Intent("device", "set", {"name": device, "percent": int(args["brightness"])}, source="llm")
+        return Intent("device", action if action in ("on", "off", "toggle") else "on", {"name": device}, source="llm")
     if name == "music_play":
         query = str(args.get("query") or "").strip()
         return Intent("music", "play_query", {"query": query}, source="llm") if query else None
@@ -158,11 +202,22 @@ def spoken_text(text: str) -> str:
 
 
 class LlmFallback:
-    def __init__(self, url: str, model: str, timeout_s: float = 20.0, max_tokens: int = 400):
+    def __init__(self, url: str, model: str, timeout_s: float = 20.0, max_tokens: int = 400,
+                 tools_provider: Callable[[], list[dict]] | None = None):
         self.url = url
         self.model = model
         self.timeout_s = timeout_s
         self.max_tokens = max_tokens
+        self.tools_provider = tools_provider
+
+    def tools(self) -> list[dict]:
+        extra: list[dict] = []
+        if self.tools_provider is not None:
+            try:
+                extra = self.tools_provider() or []
+            except Exception as exc:
+                print(f"llm: tools provider failed: {exc}", flush=True)
+        return TOOLS + extra
 
     def handle(self, text: str, execute: Callable[[Intent], Reply]) -> Reply:
         now = datetime.now().strftime("%A %d %B %Y, %H:%M")
@@ -172,7 +227,7 @@ class LlmFallback:
                 {"role": "system", "content": SYSTEM_PROMPT.format(now=now)},
                 {"role": "user", "content": text},
             ],
-            "tools": TOOLS,
+            "tools": self.tools(),
             "tool_choice": "auto",
             "temperature": 0,
             "max_tokens": self.max_tokens,

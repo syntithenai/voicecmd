@@ -24,6 +24,7 @@ import numpy as np
 from .audio import SAMPLE_RATE, parse_wav, pcm_to_wav
 from .config import ROOT, Settings
 from .handlers.clock import ClockHandler
+from .handlers.devices import DeviceHandler
 from .handlers.music import MusicHandler
 from .handlers.timers import TimerHandler
 from .handlers.weather import WeatherHandler
@@ -105,14 +106,16 @@ def word_errors(ref: str, hyp: str) -> tuple[int, int]:
     return prev[-1], len(r)
 
 
-def _intent_router(tmp: Path) -> Router:
-    return Router([
+def _intent_router(tmp: Path, devices: DeviceHandler | None = None) -> Router:
+    handlers = [
         TimerHandler(tmp / "timers.json"),
+        devices,
         MusicHandler("http://127.0.0.1:0"),
         WeatherHandler(tmp),
         ClockHandler(),
         SystemHandler(),
-    ])
+    ]
+    return Router([h for h in handlers if h is not None])
 
 
 def _intent_key(router: Router, text: str) -> tuple:
@@ -175,7 +178,10 @@ def run_bench(settings: Settings, case_dir: str, models: list[str]) -> int:
         return 1
     print(f"bench: {len(cases)} cases from {cdir}")
     tmp = Path(tempfile.mkdtemp(prefix="voicecmd-bench-"))
-    router = _intent_router(tmp)
+    devices = DeviceHandler(settings.devices_url) if settings.devices_url else None
+    if devices and not devices.refresh():
+        devices = None
+    router = _intent_router(tmp, devices)
     expected = {name: _intent_key(router, ref) for name, _, ref in cases}
 
     rows = []
@@ -187,6 +193,8 @@ def run_bench(settings: Settings, case_dir: str, models: list[str]) -> int:
         proc = _start_server(path, settings)
         try:
             client = WhisperClient(f"http://127.0.0.1:{BENCH_PORT}", settings.whisper_prompt, settings.stt_pad_ms)
+            if devices:
+                client.set_vocabulary(devices.names())
             client.transcribe(cases[0][1])  # warm-up
             errs = words = matches = 0
             lat: list[int] = []

@@ -99,6 +99,11 @@ class Settings:
         default_factory=lambda: Path.home() / "projects" / "weatherstation" / "data"
     )
 
+    # ESPHome devices (kogan_switches panel)
+    devices_url: str = "http://127.0.0.1:8790"
+    devices_refresh_s: float = 20.0
+    device_aliases: str = ""
+
     # Timers
     alarm_ring_s: int = 60
 
@@ -147,6 +152,9 @@ def load_settings(env_path: Path | None = None) -> Settings:
     s.music_duck_ratio = _float("MUSIC_DUCK_RATIO", s.music_duck_ratio)
     s.music_queue_size = _int("MUSIC_QUEUE_SIZE", s.music_queue_size)
     s.weather_data_dir = Path(_str("WEATHER_DATA_DIR") or s.weather_data_dir)
+    s.devices_url = _str("DEVICES_URL", s.devices_url).rstrip("/")
+    s.devices_refresh_s = _float("DEVICES_REFRESH_S", s.devices_refresh_s)
+    s.device_aliases = _str("DEVICE_ALIASES", s.device_aliases)
     s.alarm_ring_s = _int("ALARM_RING_S", s.alarm_ring_s)
     s.control_host = _str("CONTROL_HOST", s.control_host)
     s.control_port = _int("CONTROL_PORT", s.control_port)

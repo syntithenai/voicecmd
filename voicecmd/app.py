@@ -15,7 +15,8 @@ from .config import ROOT, Settings
 from .control import start_control_server
 from .ghost import GhostGate
 from .handlers.clock import ClockHandler
-from .handlers.llm import LlmFallback
+from .handlers.devices import DeviceHandler
+from .handlers.llm import LlmFallback, device_tools
 from .handlers.music import MusicHandler
 from .handlers.timers import Timer, TimerHandler
 from .handlers.weather import WeatherHandler
@@ -42,11 +43,15 @@ class VoiceApp:
             settings.snapserver_port, settings.snapcast_client, settings.music_queue_size, settings.music_duck_ratio,
             state_path=settings.data_dir / "music_session",
         )
-        self.llm = LlmFallback(settings.llm_url, settings.llm_model, settings.llm_timeout_s)
-        self.router = Router(
-            [self.timers, self.music, WeatherHandler(settings.weather_data_dir), ClockHandler(), SystemHandler()],
-            self.llm,
-        )
+        self.devices = (DeviceHandler(settings.devices_url, settings.devices_refresh_s, settings.device_aliases)
+                        if settings.devices_url else None)
+        self.llm = LlmFallback(settings.llm_url, settings.llm_model, settings.llm_timeout_s,
+                               tools_provider=(lambda: device_tools(self.devices.names())) if self.devices else None)
+        handlers = [self.timers, self.devices, self.music, WeatherHandler(settings.weather_data_dir), ClockHandler(),
+                    SystemHandler(self.devices.names if self.devices else None)]
+        self.router = Router([h for h in handlers if h is not None], self.llm)
+        if self.devices:
+            self.devices.on_names_changed(self.whisper.set_vocabulary)
         self.ghost = GhostGate(ROOT / "hallucinations" / "en.txt", is_supported_command=self.router.is_supported)
         self.player = Player(settings.audio_sink)
         self.tts = TtsClient(settings.tts_url, settings.tts_voice, settings.tts_model, settings.tts_speed,
@@ -169,6 +174,7 @@ class VoiceApp:
             "whisper_hedged": self.whisper.hedged,
             "whisper_fallback_wins": self.whisper.fallback_wins,
             "tts_ok": self.tts.healthy(),
+            "devices": self.devices.status() if self.devices else None,
             "timers": [
                 {"kind": t.kind, "label": t.label, "due_in_s": int(t.due - now)} for t in self.timers.timers
             ],
@@ -296,6 +302,8 @@ class VoiceApp:
                                      s.listen_timeout_ms, s.max_utterance_ms)
         self.timers.start()
         self.music.start()
+        if self.devices:
+            self.devices.start()
         control = start_control_server(self, s.control_host, s.control_port)
         threading.Thread(target=self._keepwarm, name="keepwarm", daemon=True).start()
         self.mic = MicStream(s.audio_source)

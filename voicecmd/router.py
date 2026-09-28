@@ -30,8 +30,19 @@ HELP_TEXT = (
 )
 
 
+def help_text(device_names: list[str] | None = None) -> str:
+    names = list(device_names or [])
+    if not names:
+        return HELP_TEXT
+    listed = ", ".join(names[:-1]) + f" and {names[-1]}" if len(names) > 1 else names[0]
+    return HELP_TEXT.replace(" Anything else", f" I can also switch {listed}. Anything else")
+
+
 class SystemHandler:
     domain = "system"
+
+    def __init__(self, device_names: Callable[[], list[str]] | None = None):
+        self.device_names = device_names
 
     def parse(self, n: str, nw: str) -> Intent | None:
         if DISMISS_RE.match(n):
@@ -42,7 +53,7 @@ class SystemHandler:
 
     def execute(self, intent: Intent) -> Reply:
         if intent.action == "help":
-            return Reply(HELP_TEXT, intent=intent)
+            return Reply(help_text(self.device_names() if self.device_names else None), intent=intent)
         return Reply("", intent=intent, silent=True)
 
 

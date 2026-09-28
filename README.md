@@ -63,6 +63,9 @@ Say **"hey Jarvis"**, wait for the chime (or just keep talking), then:
   "cancel all timers". While ringing: "hey Jarvis" silences it; "stop" / "snooze for 10 minutes".
 - **Weather** (from `weatherstation/data`): temperature, humidity, pressure, soil, today's high/low,
   yesterday, summary.
+- **Devices** (ESPHome plugs and lights, see below): "turn off the jug", "Taras TV on", "toggle the
+  garden pump", "set the office light to 30 percent", "dim the office light", "turn off the
+  lights" (lights only), "is the stereo on", "how much power is the washing machine using".
 - **Clock**: "what time is it", "what's the date".
 - Anything else goes to the LLM (answers in a sentence or two; can also call the tools above, e.g.
   "put on something relaxing", "a timer for a quarter of an hour").
@@ -70,6 +73,27 @@ Say **"hey Jarvis"**, wait for the chime (or just keep talking), then:
   follow-up without the wake word (not while music is playing).
 
 "hey Jarvis" during a reply interrupts it (barge-in).
+
+## Devices
+
+Device control goes through the switch panel in `~/projects/yogapp/tools/kogan_switches`
+(`kogan-switches.service`, http://127.0.0.1:8790; install with `deploy/install.sh` there). The
+panel is the device registry. It finds ESPHome `web_server` devices by mDNS and the neighbour
+table, rescans every 5 minutes and right after a new device announces itself, and keeps a live
+event stream to each one.
+
+voicecmd polls `GET /api/devices` every `DEVICES_REFRESH_S` (20 s) and switches devices with
+`POST /api/command`. Nothing is hard-coded: every switch or light entity becomes controllable by
+its friendly name, and the whisper prompt (for spelling), the LLM `device_control` /
+`device_status` tools and the "what can you do" answer all follow the live list. A newly flashed
+plug is usable by voice within about half a minute of joining Wi-Fi. If the panel is down, the
+last known list is kept.
+
+Names match exactly, then by variants ("Tara's TV", "dining room" for "Dining Room Light",
+"t v"), then `DEVICE_ALIASES` from `.env` (e.g. `kettle=Jug; pool=Swimming Machine`), then a
+unique subset of words ("washing machine"), then fuzzily. If several devices match, it asks
+which one. If nothing matches, the utterance falls through to the music handler and the LLM, so
+"turn off the music" is unaffected. Offline devices get "The X is offline."
 
 ## CLI
 

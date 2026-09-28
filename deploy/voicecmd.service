@@ -1,7 +1,7 @@
 [Unit]
 Description=voicecmd always-on voice command daemon (wake word -> whisper -> commands -> TTS)
-After=pipewire.service pipewire-pulse.service voicecmd-echo-cancel.service voicecmd-whisper.service voicecmd-whisper-cpu.service
-Wants=voicecmd-echo-cancel.service voicecmd-whisper.service voicecmd-whisper-cpu.service
+After=pipewire.service pipewire-pulse.service voicecmd-echo-cancel.service voicecmd-whisper.service voicecmd-whisper-cpu.service kogan-switches.service
+Wants=voicecmd-echo-cancel.service voicecmd-whisper.service voicecmd-whisper-cpu.service kogan-switches.service
 StartLimitIntervalSec=300
 StartLimitBurst=20
 
