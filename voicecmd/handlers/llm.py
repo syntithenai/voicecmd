@@ -133,13 +133,14 @@ def device_tools(names: list[str]) -> list[dict]:
             "type": "function",
             "function": {
                 "name": "device_control",
-                "description": "Switch a home device (smart plug or light) on or off, or set a light's brightness.",
+                "description": "Switch a home device (smart plug or light) on or off, or set a light's brightness. "
+                               "To dim or brighten a light use action 'on' with brightness.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "name": name_prop,
-                        "action": {"type": "string", "enum": ["on", "off", "toggle"]},
-                        "brightness": {"type": "integer", "description": "0-100 percent, lights only"},
+                        "action": {"type": "string", "enum": ["on", "off"]},
+                        "brightness": {"type": "integer", "description": "1-100 percent, lights only"},
                     },
                     "required": ["name", "action"],
                 },

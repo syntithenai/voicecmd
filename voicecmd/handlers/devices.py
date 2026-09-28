@@ -20,6 +20,9 @@ CONTROLLABLE = ("switch", "light")
 FUZZY_MIN = 0.8
 DIM_PCT = 30
 FRESH_S = 2.0
+# "set it to 10 percent" right after talking about a device means that device.
+CONTEXT_S = 120.0
+PRONOUNS = {"it", "that", "this", "them", "those"}
 
 ON_OFF = r"(on|off)"
 VERB = r"(?:turn|switch|power|shut|put)"
@@ -34,6 +37,10 @@ SET_RES = [
 ]
 DIM_RE = re.compile(r"^(?:dim|lower)\s+(?:the\s+)?(.+?)(?:\s+down)?$")
 BRIGHTEN_RE = re.compile(r"^(?:brighten|turn\s+up)\s+(?:the\s+)?(.+?)(?:\s+(?:up|all the way|fully|to full))?$")
+MAKE_RE = re.compile(
+    r"^make\s+(?:the\s+)?(.+?)\s+(?:nice\s+and\s+|really\s+|fully\s+|a\s+bit\s+|a\s+little\s+)?"
+    r"(bright|brighter|dim|dimmer|darker|cosy|cozy|low)$"
+)
 ON_OFF_RES = [
     re.compile(rf"^{VERB}\s+{ON_OFF}\s+(?:the\s+)?(.+)$"),
     re.compile(rf"^{VERB}\s+(?:the\s+)?(.+?)\s+{ON_OFF}$"),
@@ -50,6 +57,7 @@ POWER_RES = [
     re.compile(r"^how\s+many\s+watts\s+(?:is|does)\s+(?:the\s+)?(.+?)\s+(?:using|use|drawing|draw)$"),
 ]
 LEADING_NOISE_RE = re.compile(r"^(?:the|my|our|a)\s+")
+BARE_NAME_RE = re.compile(r"^(?:(?:the|um|uh|oh|i\s+mean)\s+)*(.+?)(?:\s+(?:one|please))?$")
 
 
 def name_key(text: str) -> str:
@@ -161,6 +169,8 @@ class DeviceHandler:
         self.last_refresh = 0.0
         self.last_error = ""
         self._attempted = False
+        self._last: tuple[str, float] | None = None
+        self._pending: tuple[str, dict, float] | None = None
         self._lock = threading.Lock()
         self._listeners: list[Callable[[list[str]], None]] = []
         self._names: list[str] = []
@@ -266,7 +276,14 @@ class DeviceHandler:
 
     # ---- parsing ----------------------------------------------------------------
 
+    def _recent(self, slot: tuple | None) -> bool:
+        return slot is not None and time.time() - slot[-1] < CONTEXT_S
+
     def _intent(self, phrase: str, action: str, **params) -> Intent | None:
+        if phrase.strip() in PRONOUNS:
+            if not self._recent(self._last):
+                return None
+            phrase = self._last[0]
         hits = self.resolve(phrase)
         if action == "set":
             # "turn up the stereo" means volume, not a plug.
@@ -305,6 +322,12 @@ class DeviceHandler:
                 intent = self._intent(m.group(1), "set", percent=min(100, int(m.group(2))))
                 if intent:
                     return intent
+        m = MAKE_RE.match(n)
+        if m:
+            pct = 100 if m.group(2).startswith("bright") else DIM_PCT
+            intent = self._intent(m.group(1), "set", percent=pct)
+            if intent:
+                return intent
         m = TOGGLE_RE.match(n)
         if m:
             intent = self._intent(m.group(1), "toggle")
@@ -327,6 +350,13 @@ class DeviceHandler:
             intent = self._intent(m.group(1), "set", percent=100)
             if intent:
                 return intent
+        if self._recent(self._pending):
+            # Answer to "I found X and Y; which one?"
+            want, params, _ = self._pending
+            m = BARE_NAME_RE.match(n)
+            hits = self.resolve(m.group(1)) if m else []
+            if len({t.name for t in hits}) == 1:
+                return Intent("device", want, {**params, "name": hits[0].name})
         return None
 
     # ---- execution --------------------------------------------------------------
@@ -354,8 +384,12 @@ class DeviceHandler:
         p = intent.params
         if intent.action == "ambiguous":
             names = p.get("names") or []
+            if p.get("want"):
+                rest = {k: v for k, v in p.items() if k not in ("names", "want")}
+                self._pending = (p["want"], rest, time.time())
             listed = ", ".join(names[:-1]) + f" and {names[-1]}" if len(names) > 1 else "".join(names)
             return Reply(f"I found {listed}; which one?", ok=False, intent=intent, expects_reply=True)
+        self._pending = None
         self._fresh()
         if intent.action == "all_lights":
             return self._all_lights(intent, p.get("state", "off"))
@@ -367,6 +401,7 @@ class DeviceHandler:
         if len(names) > 1:
             return self.execute(Intent("device", "ambiguous", {"names": names}, intent.source))
         t = hits[0]
+        self._last = (t.name, time.time())
 
         if intent.action == "status":
             if not t.online:

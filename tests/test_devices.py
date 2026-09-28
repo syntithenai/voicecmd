@@ -107,6 +107,8 @@ def test_resolve_ambiguous_and_unknown(devices):
     ("dining room to 50%", "set", {"name": "Dining Room Light", "percent": 50}),
     ("dim the dining room light", "set", {"name": "Dining Room Light", "percent": 30}),
     ("brighten the dining room", "set", {"name": "Dining Room Light", "percent": 100}),
+    ("Make the dining room light nice and bright.", "set", {"name": "Dining Room Light", "percent": 100}),
+    ("make the dining room cosy", "set", {"name": "Dining Room Light", "percent": 30}),
     ("turn off all the lights", "all_lights", {"state": "off"}),
     ("lights on", "all_lights", {"state": "on"}),
     ("is the jug on?", "status", {"name": "Jug"}),
@@ -181,6 +183,24 @@ def test_new_device_becomes_controllable(devices, panel):
     assert whisper.prompt.endswith("Taras Washing Machine.") and "Taras Fridge" in whisper.prompt
     enum = device_tools(devices.names())[0]["function"]["parameters"]["properties"]["name"]["enum"]
     assert "Taras Fridge" in enum
+
+
+def test_pronoun_means_last_device(devices, panel):
+    assert parse(devices, "set it to 10%") is None  # nothing talked about yet
+    devices.execute(parse(devices, "is the dining room light on"))
+    assert parse(devices, "Set it to 10%.").params == {"name": "Dining Room Light", "percent": 10}
+    assert parse(devices, "turn it off").params == {"name": "Dining Room Light"}
+    devices._last = ("Dining Room Light", 0.0)
+    assert parse(devices, "turn it off") is None  # context expired
+
+
+def test_bare_name_answers_which_one(devices, panel):
+    reply = devices.execute(parse(devices, "turn on the machine"))
+    assert reply.expects_reply
+    intent = parse(devices, "the coffee machine")
+    assert (intent.action, intent.params) == ("on", {"name": "Coffee Machine"})
+    devices.execute(parse(devices, "jug off"))
+    assert parse(devices, "the stereo") is None  # nothing pending any more
 
 
 def test_panel_down_keeps_last_list(devices, panel):
