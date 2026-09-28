@@ -1,0 +1,28 @@
+[project]
+name = "voicecmd"
+version = "0.1.0"
+description = "Always-on local voice commands: wake word, resident whisper.cpp, fast-path handlers"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26",
+  "webrtcvad-wheels>=2.0",
+  "openwakeword>=0.4",
+  "onnxruntime>=1.17",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+voicecmd = "voicecmd.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["voicecmd*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

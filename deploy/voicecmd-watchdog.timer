@@ -1,0 +1,12 @@
+[Unit]
+Description=Run voicecmd health watchdog every minute
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=1min
+AccuracySec=15s
+Persistent=true
+Unit=voicecmd-watchdog.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,36 @@
+# One command per line (as spoken after the wake word). Used by --make-bench-cases.
+play some jazz
+play something by Miles Davis
+play the album Kind of Blue
+pause the music
+resume
+skip this song
+next track
+stop the music
+turn it up
+turn the volume down
+set the volume to 40 percent
+what's playing
+set a timer for five minutes
+set a pasta timer for twelve minutes
+timer for an hour and a half
+set a timer for 90 seconds
+how long left on my timer
+cancel the pasta timer
+cancel all timers
+set an alarm for 6:30 tomorrow morning
+wake me up at half past seven
+remind me in twenty minutes to check the oven
+snooze for ten minutes
+what's the temperature outside
+what's the weather like
+how humid is it
+what's the pressure
+how wet is the soil
+what was the high today
+how cold did it get yesterday
+what time is it
+what's the date today
+never mind
+what can you do
+who wrote the Moonlight Sonata

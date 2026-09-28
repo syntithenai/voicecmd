@@ -1,0 +1,17 @@
+[Unit]
+Description=voicecmd resident whisper.cpp server (Vulkan) on 127.0.0.1:10020
+After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=20
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/voicecmd
+EnvironmentFile=-%h/projects/voicecmd/.env
+ExecStart=%h/projects/voicecmd/scripts/start_whisper_server.sh
+Restart=always
+RestartSec=3
+SyslogIdentifier=voicecmd-whisper
+
+[Install]
+WantedBy=default.target

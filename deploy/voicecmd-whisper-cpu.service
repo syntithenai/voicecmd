@@ -1,0 +1,18 @@
+[Unit]
+Description=voicecmd CPU-only whisper.cpp fallback (base.en) on 127.0.0.1:10022
+After=network.target
+StartLimitIntervalSec=300
+StartLimitBurst=20
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/voicecmd
+EnvironmentFile=-%h/projects/voicecmd/.env
+ExecStart=%h/projects/voicecmd/scripts/start_whisper_server.sh --cpu
+Restart=always
+RestartSec=3
+Nice=5
+SyslogIdentifier=voicecmd-whisper-cpu
+
+[Install]
+WantedBy=default.target

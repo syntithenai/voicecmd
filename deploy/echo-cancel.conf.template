@@ -1,0 +1,52 @@
+# Standalone PipeWire instance providing a WebRTC echo-cancelled mic for voicecmd.
+# Rendered by scripts/setup_echo_cancel.sh (substitutes @MIC@) and run by
+# voicecmd-echo-cancel.service as `pipewire -c <rendered file>`; no restart of the
+# main PipeWire daemon is needed.
+#
+# monitor.mode: the echo reference is the monitor of the default sink, so anything
+# playing there (TTS, snapclient music) is cancelled without rerouting apps.
+
+context.properties = {
+    log.level = 0
+}
+
+context.spa-libs = {
+    audio.convert.* = audioconvert/libspa-audioconvert
+    support.*       = support/libspa-support
+}
+
+context.modules = [
+    { name = libpipewire-module-rt
+        args = { }
+        flags = [ ifexists nofail ]
+    }
+    { name = libpipewire-module-protocol-native }
+    { name = libpipewire-module-client-node }
+    { name = libpipewire-module-adapter }
+    { name = libpipewire-module-echo-cancel
+        args = {
+            library.name = aec/libspa-aec-webrtc
+            monitor.mode = true
+            aec.args = {
+                webrtc.noise_suppression = true
+                webrtc.gain_control = true
+                webrtc.high_pass_filter = true
+            }
+            capture.props = {
+                node.name = "voicecmd_ec_capture"
+                target.object = "@MIC@"
+                node.passive = true
+                audio.rate = 48000
+            }
+            source.props = {
+                node.name = "voicecmd_ec_source"
+                node.description = "voicecmd echo-cancelled mic"
+                audio.rate = 48000
+            }
+            playback.props = {
+                node.name = "voicecmd_ec_reference"
+                node.passive = true
+            }
+        }
+    }
+]

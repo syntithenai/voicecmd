@@ -1,0 +1,19 @@
+[Unit]
+Description=voicecmd always-on voice command daemon (wake word -> whisper -> commands -> TTS)
+After=pipewire.service pipewire-pulse.service voicecmd-echo-cancel.service voicecmd-whisper.service voicecmd-whisper-cpu.service
+Wants=voicecmd-echo-cancel.service voicecmd-whisper.service voicecmd-whisper-cpu.service
+StartLimitIntervalSec=300
+StartLimitBurst=20
+
+[Service]
+Type=simple
+WorkingDirectory=%h/projects/voicecmd
+EnvironmentFile=-%h/projects/voicecmd/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=%h/projects/voicecmd/.venv/bin/python -m voicecmd --run
+Restart=always
+RestartSec=3
+SyslogIdentifier=voicecmd
+
+[Install]
+WantedBy=default.target

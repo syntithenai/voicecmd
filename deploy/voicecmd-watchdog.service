@@ -1,0 +1,8 @@
+[Unit]
+Description=Watchdog: restart voicecmd components that stop responding
+After=voicecmd.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/projects/voicecmd/scripts/watchdog.sh
+Nice=10

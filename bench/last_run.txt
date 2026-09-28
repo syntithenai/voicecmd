@@ -1,0 +1,41 @@
+bench: 280 cases from /home/stever/projects/voicecmd/bench/cases
+
+tiny.en-q5_1: intent 267/280  misses:
+    cancel_the_pasta_timer__bm_george__noisy: 'Cancel the pasted timer.'
+    play_some_jazz__bm_george__noisy: 'Play some jas!'
+    play_the_album_kind_of_blue__bm_george__clean: 'Play the album, kind of blues.'
+    play_the_album_kind_of_blue__bm_george__noisy: 'Play the album kind of blues.'
+    resume__bm_george__noisy: 'Re-eume.'
+    set_a_pasta_timer_for_twelve_minutes__af_heart__clean: 'Set a pause to timer for 12 minutes.'
+    set_a_pasta_timer_for_twelve_minutes__af_heart__noisy: 'Set a pause to timer for 12 minutes.'
+    set_a_pasta_timer_for_twelve_minutes__am_michael__clean: 'Set a pause to timer for 12 minutes.'
+    set_a_pasta_timer_for_twelve_minutes__am_michael__noisy: 'Set a pause to timer for 12 minutes.'
+    set_an_alarm_for_6_30_tomorrow_morning__af_heart__clean: 'Set an alarm for 630 tomorrow morning.'
+    set_an_alarm_for_6_30_tomorrow_morning__bm_george__noisy: 'Set an alarm for 630 tomorrow morning.'
+    timer_for_an_hour_and_a_half__bf_emma__noisy: 'Time for an hour and a half.'
+    timer_for_an_hour_and_a_half__bm_george__clean: 'Time for an hour and a half.'
+
+small.en-q5_1: intent 276/280  misses:
+    next_track__bm_george__noisy: 'next drive here.'
+    play_the_album_kind_of_blue__bf_emma__clean: 'play the album kind of blues.'
+    play_the_album_kind_of_blue__bm_george__clean: 'Play the album Kind of Blues.'
+    play_the_album_kind_of_blue__bm_george__noisy: 'Play the album Kind of Blues.'
+
+model               WER   intent   p50 ms   p95 ms   RSS MB
+tiny.en-q5_1       2.3%    95.4%       66     1033      172
+small.en-q5_1      1.3%    98.6%      131      316      151
+lay the album kind of blues.'
+    play_the_album_kind_of_blue__bm_george__clean: 'Play the album Kind of Blues.'
+    play_the_album_kind_of_blue__bm_george__noisy: 'play the album kind of blues.'
+    remind_me_in_twenty_minutes_to_check_the_oven__af_heart__clean: 'Remind me in 20 minutes to check the up.'
+    remind_me_in_twenty_minutes_to_check_the_oven__af_heart__noisy: 'Remind me in 20 minutes to check the up.'
+    remind_me_in_twenty_minutes_to_check_the_oven__am_michael__clean: 'Remind me in 20 minutes to check the up.'
+    remind_me_in_twenty_minutes_to_check_the_oven__am_michael__noisy: 'Remind me in 20 minutes to check the alarm.'
+    resume__bm_george__noisy: 'Re-eume.'
+    set_a_pasta_timer_for_twelve_minutes__af_heart__noisy: 'Set a pause to timer for 12 minutes.'
+    set_a_pasta_timer_for_twelve_minutes__am_michael__clean: 'Set a pause to timer for 12 minutes.'
+    set_an_alarm_for_6_30_tomorrow_morning__bm_george__noisy: 'Set an alarm for 630 tomorrow morning.'
+
+model               WER   intent   p50 ms   p95 ms   RSS MB
+tiny.en-q5_1       3.1%    91.8%       39      846      197
+small.en-q5_1      2.4%    95.0%      193      317      150
