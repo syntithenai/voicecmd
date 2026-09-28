@@ -103,6 +103,7 @@ class Settings:
     devices_url: str = "http://127.0.0.1:8790"
     devices_refresh_s: float = 20.0
     device_aliases: str = ""
+    device_groups: str = ""
 
     # Timers
     alarm_ring_s: int = 60
@@ -155,6 +156,7 @@ def load_settings(env_path: Path | None = None) -> Settings:
     s.devices_url = _str("DEVICES_URL", s.devices_url).rstrip("/")
     s.devices_refresh_s = _float("DEVICES_REFRESH_S", s.devices_refresh_s)
     s.device_aliases = _str("DEVICE_ALIASES", s.device_aliases)
+    s.device_groups = _str("DEVICE_GROUPS", s.device_groups)
     s.alarm_ring_s = _int("ALARM_RING_S", s.alarm_ring_s)
     s.control_host = _str("CONTROL_HOST", s.control_host)
     s.control_port = _int("CONTROL_PORT", s.control_port)

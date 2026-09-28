@@ -7,6 +7,7 @@ controllable by name without a restart.
 from __future__ import annotations
 
 import difflib
+import fnmatch
 import re
 import threading
 import time
@@ -91,12 +92,40 @@ def parse_aliases(spec: str) -> dict[str, str]:
     return out
 
 
+def parse_groups(spec: str) -> dict[str, tuple[str, list[tuple[str | None, str]]]]:
+    """'office=light:*office*, *air filter*, *monitor*; garden=*pump*' -> {key: (name, [(domain, pattern)])}.
+
+    Patterns are shell-style globs over device names, optionally limited to a domain, so devices
+    that appear or get renamed later join the group automatically.
+    """
+    out: dict[str, tuple[str, list[tuple[str | None, str]]]] = {}
+    for part in (spec or "").split(";"):
+        if "=" not in part:
+            continue
+        name, members = (s.strip() for s in part.split("=", 1))
+        rules: list[tuple[str | None, str]] = []
+        for raw in members.split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            domain, _, pattern = raw.rpartition(":")
+            pattern = re.sub(r"\s+", " ", pattern.lower().replace("'", "").replace("’", "")).strip()
+            rules.append((domain.strip().lower() or None, pattern))
+        if name and rules:
+            out[name_key(name)] = (name, rules)
+    return out
+
+
 def pct_to_brightness(pct: int) -> int:
     return max(1, min(255, int(pct * 255 / 100 + 0.5)))
 
 
 def brightness_to_pct(brightness: int | None) -> int | None:
     return None if brightness is None else round(brightness * 100 / 255)
+
+
+def _listed(names: list[str]) -> str:
+    return ", ".join(names[:-1]) + f" and {names[-1]}" if len(names) > 1 else "".join(names)
 
 
 def _watts(value: float) -> str:
@@ -157,10 +186,12 @@ class DeviceHandler:
         fetch: Callable[[], dict] | None = None,
         send: Callable[[dict], Any] | None = None,
         timeout_s: float = 3.0,
+        groups: str = "",
     ):
         self.url = url.rstrip("/")
         self.refresh_s = refresh_s
         self.aliases = aliases if isinstance(aliases, dict) else parse_aliases(aliases)
+        self.groups = parse_groups(groups)
         self.timeout_s = timeout_s
         self._fetch = fetch or (lambda: get_json(f"{self.url}/api/devices", timeout=self.timeout_s))
         self._send = send or (lambda body: post_json(f"{self.url}/api/command", body, timeout=self.timeout_s))
@@ -185,6 +216,22 @@ class DeviceHandler:
 
     def names(self) -> list[str]:
         return list(self._names)
+
+    def group_names(self) -> list[str]:
+        return [name for name, _ in self.groups.values()]
+
+    def group_for(self, phrase: str) -> str | None:
+        key = re.sub(r"^(?:the|my|our)\s+", "", name_key(phrase))
+        key = re.sub(r"\s+(?:room|area)$", "", key)
+        return key if key in self.groups else None
+
+    def group_members(self, group_key: str) -> list[Target]:
+        _, rules = self.groups[group_key]
+        with self._lock:
+            targets = list(self.targets)
+        return [t for t in targets
+                if any((domain is None or t.domain == domain) and fnmatch.fnmatchcase(name_key(t.name), pattern)
+                       for domain, pattern in rules)]
 
     def refresh(self) -> bool:
         self._attempted = True
@@ -280,6 +327,9 @@ class DeviceHandler:
         return slot is not None and time.time() - slot[-1] < CONTEXT_S
 
     def _intent(self, phrase: str, action: str, **params) -> Intent | None:
+        group = self.group_for(phrase)
+        if group and action in ("on", "off", "status"):
+            return Intent("device", action, {"group": self.groups[group][0]})
         if phrase.strip() in PRONOUNS:
             if not self._recent(self._last):
                 return None
@@ -393,6 +443,9 @@ class DeviceHandler:
         self._fresh()
         if intent.action == "all_lights":
             return self._all_lights(intent, p.get("state", "off"))
+        group = self.group_for(str(p.get("group") or p.get("name") or ""))
+        if group and intent.action in ("on", "off", "status"):
+            return self._group(intent, group)
 
         hits = self.resolve(str(p.get("name", "")))
         names = list(dict.fromkeys(t.name for t in hits))
@@ -438,6 +491,27 @@ class DeviceHandler:
             self._command(t, "turn_on", pct_to_brightness(pct))
             return Reply(f"{t.name} {pct} percent.", intent=intent)
         return Reply(f"I can't {intent.action} the {t.name}.", ok=False, intent=intent)
+
+    def _group(self, intent: Intent, group_key: str) -> Reply:
+        label = self.groups[group_key][0]
+        members = self.group_members(group_key)
+        if not members:
+            return Reply(f"Nothing is in the {label} group yet.", ok=False, intent=intent)
+        online = [t for t in members if t.online]
+        offline = [t.name for t in members if not t.online]
+        if intent.action == "status":
+            on = [t.name for t in online if t.is_on]
+            text = (f"In the {label}, {_listed(on)} {'is' if len(on) == 1 else 'are'} on."
+                    if on else f"Everything in the {label} is off.")
+        elif not online:
+            return Reply(f"Everything in the {label} is offline.", ok=False, intent=intent)
+        else:
+            for t in online:
+                self._command(t, f"turn_{intent.action}")
+            text = f"{label.capitalize()} {intent.action}."
+        if offline:
+            text += f" {_listed(offline)} {'is' if len(offline) == 1 else 'are'} offline."
+        return Reply(text, ok=bool(online), intent=intent, data={"members": [t.name for t in members]})
 
     def _all_lights(self, intent: Intent, state: str) -> Reply:
         with self._lock:

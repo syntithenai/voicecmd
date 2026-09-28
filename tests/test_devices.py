@@ -203,6 +203,61 @@ def test_bare_name_answers_which_one(devices, panel):
     assert parse(devices, "the stereo") is None  # nothing pending any more
 
 
+OFFICE = {"devices": [
+    {"ip": "10.0.0.103", "name": "light_w_12", "online": True, "firmware": {"friendly": "Office Light"},
+     "entities": [{"id": "light/Office Light", "domain": "light", "name": "Office Light", "state": "ON", "brightness": 255}]},
+    plug("10.0.0.90", "coffee_machine", "Air Filter", state="ON"),
+    plug("10.0.0.201", "taras_tv", "Office Desk", state="ON"),
+    plug("10.0.0.184", "jug", "Jug", state="ON"),
+    plug("10.0.0.101", "stereo", "AOC Monitor", online=False),
+]}
+OFFICE_GROUPS = "office=light:*office*, *air filter*, *monitor*"
+
+
+@pytest.fixture
+def office():
+    p = FakePanel(OFFICE)
+    h = DeviceHandler("http://panel", fetch=p.fetch, send=p.send, groups=OFFICE_GROUPS)
+    h.refresh()
+    return h, p
+
+
+@pytest.mark.parametrize("text, action", [
+    ("turn off the office", "off"), ("Turn on the office.", "on"), ("office off", "off"),
+    ("switch the office room on", "on"), ("is the office on", "status"),
+])
+def test_group_phrases(office, text, action):
+    h, _ = office
+    intent = parse(h, text)
+    assert (intent.action, intent.params) == (action, {"group": "office"})
+
+
+def test_group_members_follow_names(office):
+    h, p = office
+    assert [t.name for t in h.group_members("office")] == ["Office Light", "Air Filter", "AOC Monitor"]
+    p.payload["devices"][2] = plug("10.0.0.201", "taras_tv", "Doomsday Monitor")
+    h.refresh()
+    assert "Doomsday Monitor" in [t.name for t in h.group_members("office")]
+
+
+def test_group_switches_online_members_only(office):
+    h, p = office
+    reply = h.execute(parse(h, "turn off the office"))
+    assert reply.text == "Office off. AOC Monitor is offline."
+    assert [b["id"] for b in p.sent] == ["light/Office Light", "switch/Air Filter"]
+    assert all(b["action"] == "turn_off" for b in p.sent)
+
+
+def test_group_status_and_single_device_still_works(office):
+    h, p = office
+    assert h.execute(parse(h, "is the office on")).text == \
+        "In the office, Office Light and Air Filter are on. AOC Monitor is offline."
+    assert parse(h, "turn off the office light").params == {"name": "Office Light"}
+    assert parse(h, "dim the office").params == {"name": "Office Light", "percent": 30}
+    assert h.execute(Intent("device", "off", {"name": "office"}, "llm")).text.startswith("Office off.")
+    assert "office" in device_tools(h.names() + h.group_names())[0]["function"]["parameters"]["properties"]["name"]["enum"]
+
+
 def test_panel_down_keeps_last_list(devices, panel):
     panel.down = True
     assert not devices.refresh()

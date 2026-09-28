@@ -43,12 +43,17 @@ class VoiceApp:
             settings.snapserver_port, settings.snapcast_client, settings.music_queue_size, settings.music_duck_ratio,
             state_path=settings.data_dir / "music_session",
         )
-        self.devices = (DeviceHandler(settings.devices_url, settings.devices_refresh_s, settings.device_aliases)
+        self.devices = (DeviceHandler(settings.devices_url, settings.devices_refresh_s, settings.device_aliases,
+                                      groups=settings.device_groups)
                         if settings.devices_url else None)
-        self.llm = LlmFallback(settings.llm_url, settings.llm_model, settings.llm_timeout_s,
-                               tools_provider=(lambda: device_tools(self.devices.names())) if self.devices else None)
+        self.llm = LlmFallback(
+            settings.llm_url, settings.llm_model, settings.llm_timeout_s,
+            tools_provider=(lambda: device_tools(self.devices.names() + self.devices.group_names()))
+            if self.devices else None,
+        )
+        speakable = (lambda: self.devices.names() + [f"the {g}" for g in self.devices.group_names()]) if self.devices else None
         handlers = [self.timers, self.devices, self.music, WeatherHandler(settings.weather_data_dir), ClockHandler(),
-                    SystemHandler(self.devices.names if self.devices else None)]
+                    SystemHandler(speakable)]
         self.router = Router([h for h in handlers if h is not None], self.llm)
         if self.devices:
             self.devices.on_names_changed(self.whisper.set_vocabulary)
