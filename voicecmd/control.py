@@ -63,6 +63,27 @@ def _make_handler(app: "VoiceApp"):
             elif self.path == "/stop":
                 app.stop_audio_output()
                 self._send(200, {"ok": True})
+            elif self.path == "/dictate":
+                action = str(body.get("action") or "toggle").strip().lower()
+                if action == "toggle":
+                    action = "stop" if app.dictating else "start"
+                if action == "start":
+                    ok = app.start_dictation()
+                    self._send(200 if ok else 409, {"ok": ok, "dictating": app.dictating})
+                elif action == "stop":
+                    app.stop_dictation("http")
+                    self._send(200, {"ok": True, "dictating": app.dictating})
+                else:
+                    self._send(400, {"error": "action must be start, stop or toggle"})
+            elif self.path == "/type":
+                text = str(body.get("text") or "")
+                if not text.strip():
+                    self._send(400, {"error": "missing text"})
+                    return
+                if not app.typer.available:
+                    self._send(503, {"error": "ydotool not installed"})
+                    return
+                self._send(200, {"ok": True, "chars": app.type_text(text)})
             else:
                 self._send(404, {"error": "not found"})
 

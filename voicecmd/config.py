@@ -108,6 +108,14 @@ class Settings:
     # Timers
     alarm_ring_s: int = 60
 
+    # Dictation (types into the focused window via ydotool)
+    dictate_enabled: bool = True
+    dictate_silence_ms: int = 900
+    dictate_max_utterance_ms: int = 30000
+    dictate_idle_s: int = 120
+    dictate_prompt: str = "Clear, well-punctuated English sentences."
+    dictate_key_delay_ms: int = 4
+
     # Control HTTP
     control_host: str = "127.0.0.1"
     control_port: int = 10021
@@ -158,6 +166,12 @@ def load_settings(env_path: Path | None = None) -> Settings:
     s.device_aliases = _str("DEVICE_ALIASES", s.device_aliases)
     s.device_groups = _str("DEVICE_GROUPS", s.device_groups)
     s.alarm_ring_s = _int("ALARM_RING_S", s.alarm_ring_s)
+    s.dictate_enabled = _bool("DICTATE_ENABLED", s.dictate_enabled)
+    s.dictate_silence_ms = _int("DICTATE_SILENCE_MS", s.dictate_silence_ms)
+    s.dictate_max_utterance_ms = _int("DICTATE_MAX_UTTERANCE_MS", s.dictate_max_utterance_ms)
+    s.dictate_idle_s = _int("DICTATE_IDLE_S", s.dictate_idle_s)
+    s.dictate_prompt = _str("DICTATE_PROMPT", s.dictate_prompt)
+    s.dictate_key_delay_ms = _int("DICTATE_KEY_DELAY_MS", s.dictate_key_delay_ms)
     s.control_host = _str("CONTROL_HOST", s.control_host)
     s.control_port = _int("CONTROL_PORT", s.control_port)
     s.earcons = _bool("EARCONS", s.earcons)

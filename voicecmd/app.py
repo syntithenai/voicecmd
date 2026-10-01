@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import queue
 import signal
 import threading
 import time
@@ -10,20 +11,22 @@ from datetime import datetime
 
 import numpy as np
 
+from . import dictation
 from .audio import FRAME_MS, MicStream, Player, RingBuffer
 from .config import ROOT, Settings
 from .control import start_control_server
-from .ghost import GhostGate
+from .ghost import GhostGate, clean_transcript
 from .handlers.clock import ClockHandler
 from .handlers.devices import DeviceHandler
 from .handlers.llm import LlmFallback, device_tools
 from .handlers.music import MusicHandler
 from .handlers.timers import Timer, TimerHandler
 from .handlers.weather import WeatherHandler
-from .intents import Reply
+from .intents import Intent, Reply
 from .router import Router, SystemHandler
 from .stt import WhisperClient
 from .tts import Speaker, TtsClient
+from .typer import Typer
 from .vad import Endpointer
 
 KEEPWARM_S = 240
@@ -58,14 +61,23 @@ class VoiceApp:
         if self.devices:
             self.devices.on_names_changed(self.whisper.set_vocabulary)
         self.music.tunebook.on_vocabulary_changed(lambda names: self.whisper.set_vocabulary(names, "Tunebook"))
-        self.ghost = GhostGate(ROOT / "hallucinations" / "en.txt", is_supported_command=self.router.is_supported)
+        self.ghost = GhostGate(
+            ROOT / "hallucinations" / "en.txt",
+            is_supported_command=lambda t: self.router.is_supported(t) or (
+                settings.dictate_enabled and dictation.is_command(t)),
+        )
+        self.typer = Typer(key_delay_ms=settings.dictate_key_delay_ms)
+        self.dictating = False
+        self._dict_chunks: deque[int] = deque(maxlen=200)
+        self._dict_interrupted = False
+        self._dict_queue: queue.Queue[np.ndarray] = queue.Queue()
         self.player = Player(settings.audio_sink)
         self.tts = TtsClient(settings.tts_url, settings.tts_voice, settings.tts_model, settings.tts_speed,
                              cache_dir=settings.data_dir / "tts_cache")
         self.speaker = Speaker(self.tts, self.player, on_state=self.ghost.note_tts_state, on_text=self.ghost.note_tts)
 
         self._lock = threading.RLock()
-        self.state = "idle"  # idle | listening | processing
+        self.state = "idle"  # idle | listening | processing | dictating
         self.listen_via = ""
         self.expecting_reply = False
         self._turn = 0
@@ -88,7 +100,9 @@ class VoiceApp:
             if speak:
                 self.speaker.say(FILLER_PHRASE)
 
-        reply = self.router.route(text, on_slow=filler, slow_after_s=self.s.llm_filler_after_s)
+        reply = self._dictation_command(text) if self.s.dictate_enabled else None
+        if reply is None:
+            reply = self.router.route(text, on_slow=filler, slow_after_s=self.s.llm_filler_after_s)
         route_ms = int((time.monotonic() - started) * 1000)
         if speak:
             if reply.text and not reply.silent:
@@ -117,6 +131,145 @@ class VoiceApp:
         out = {k: v for k, v in entry.items() if not k.startswith("_")}
         out["expects_reply"] = reply.expects_reply
         return out
+
+    # --- dictation ---
+
+    def _dictation_command(self, text: str) -> Reply | None:
+        interrupted, self._dict_interrupted = self._dict_interrupted, False
+        if dictation.is_stop(text) or (interrupted and dictation.is_bare_stop(text)):
+            self.stop_dictation("command", chime=False)
+            return Reply("", intent=Intent("dictate", "stop"), silent=True)
+        match = dictation.match_command(text)
+        if match is None:
+            return None
+        kind, body = match
+        if not self.typer.available:
+            return Reply("Dictation needs ydotool installed.", ok=False, intent=Intent("dictate", kind))
+        if kind == "start":
+            if not self.start_dictation(chime=False):
+                return Reply("Continuous dictation needs the voicecmd daemon running.", ok=False,
+                             intent=Intent("dictate", "start"))
+            return Reply("", intent=Intent("dictate", "start"), silent=True)
+        chars = self.type_text(body)
+        return Reply("", intent=Intent("dictate", "once", {"chars": chars}), silent=True)
+
+    def _retranscribe_for_dictation(self, pcm: np.ndarray, fallback: str) -> str:
+        """The command prompt's device vocabulary skews casing ("Hello World."); prose prompt for typed text."""
+        try:
+            tr = self.whisper.transcribe(pcm, prompt=self.s.dictate_prompt)
+        except Exception as exc:
+            print(f"dict: re-transcribe failed: {exc}", flush=True)
+            return fallback
+        text = clean_transcript(tr.text)
+        return text if (dictation.match_command(text) or ("", ""))[0] == "once" else fallback
+
+    def type_text(self, text: str) -> int:
+        chars = self.typer.type_text(text)
+        print(f"dict[type]: {text!r} ({chars} chars)", flush=True)
+        return chars
+
+    def _reset_dictation_endpointer(self) -> None:
+        assert self.endpointer is not None
+        self.endpointer.reset(
+            listen_timeout_ms=self.s.dictate_idle_s * 1000,
+            min_silence_ms=self.s.dictate_silence_ms,
+            max_utterance_ms=self.s.dictate_max_utterance_ms,
+        )
+
+    def start_dictation(self, chime: bool = True) -> bool:
+        if self.endpointer is None or not self.typer.available:
+            return False
+        with self._lock:
+            self._turn += 1
+            self.dictating = True
+            self._dict_chunks.clear()
+            self._reset_dictation_endpointer()
+            self._set_state("dictating", "dictation")
+        threading.Thread(target=self.music.duck, daemon=True).start()
+        if chime and self.s.earcons:
+            self.speaker.chime("done")
+        print("dict: started", flush=True)
+        return True
+
+    def stop_dictation(self, reason: str, chime: bool = True, unduck: bool = True) -> bool:
+        with self._lock:
+            if not self.dictating:
+                return False
+            self.dictating = False
+            self._turn += 1
+            if self.state == "dictating":
+                self._set_state("idle")
+        if unduck and not self.timers.ringing:
+            threading.Thread(target=self.music.unduck, daemon=True).start()
+        if chime and self.s.earcons:
+            self.speaker.chime("done")
+        print(f"dict: stopped ({reason})", flush=True)
+        return True
+
+    def _dictation_worker(self) -> None:
+        while not self._stop.is_set():
+            try:
+                pcm = self._dict_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            try:
+                self._process_dictation(pcm)
+            except Exception as exc:
+                print(f"dict: unexpected error: {exc}", flush=True)
+
+    def _process_dictation(self, pcm: np.ndarray) -> None:
+        if not self.dictating:
+            return
+        started = time.monotonic()
+        try:
+            tr = self.whisper.transcribe(pcm, prompt=self.s.dictate_prompt)
+        except Exception as exc:
+            print(f"dict: stt failed: {exc}", flush=True)
+            if self.s.earcons:
+                self.speaker.chime("error")
+            return
+        decision = self.ghost.decide(tr.text, no_speech_prob=tr.no_speech_prob, avg_logprob=tr.avg_logprob,
+                                     expecting_reply=True)
+        action, text = dictation.match_in_mode(decision.text) if decision.accept else ("rejected", "")
+        print(
+            f"dict: {tr.text!r} {tr.elapsed_ms} ms audio={len(pcm) / 16000:.1f}s "
+            f"gate={decision.reason} action={action}",
+            flush=True,
+        )
+        if not decision.accept or not self.dictating:
+            return
+        if text:
+            chars = self.typer.type_text(text + " ")
+            if chars:
+                self._dict_chunks.append(chars)
+        if action == "newline":
+            self.typer.key("shift+enter")
+            self._dict_chunks.append(1)
+        elif action == "paragraph":
+            self.typer.key("shift+enter", 2)
+            self._dict_chunks.append(2)
+        elif action == "send":
+            self.typer.key("enter")
+            self._dict_chunks.clear()
+        elif action == "scratch":
+            if self._dict_chunks:
+                self.typer.key("backspace", self._dict_chunks.pop())
+            elif self.s.earcons:
+                self.speaker.chime("error")
+        elif action == "stop":
+            self.stop_dictation("spoken")
+        self.history.appendleft({
+            "at": datetime.now().isoformat(timespec="seconds"),
+            "source": "dictation",
+            "text": text,
+            "intent": f"dictate.{action}",
+            "via": "dictation",
+            "params": {},
+            "reply": "",
+            "ok": True,
+            "route_ms": int((time.monotonic() - started) * 1000),
+            "stt_ms": tr.elapsed_ms,
+        })
 
     # --- timers ringing ---
 
@@ -171,6 +324,8 @@ class VoiceApp:
             "listen_via": self.listen_via,
             "uptime_s": int(now - self.started_at),
             "speaking": self.speaker.speaking,
+            "dictating": self.dictating,
+            "typer_available": self.typer.available,
             "wake_model": self.s.wake_model,
             "wake_score": round(getattr(self.wake, "last_score", 0.0), 3),
             "mic_source": self.s.audio_source or "default",
@@ -252,7 +407,10 @@ class VoiceApp:
                 self._end_interaction(turn)
                 return
 
-            result = self.handle_text(decision.text, speak=True, source="voice")
+            text = decision.text
+            if self.s.dictate_enabled and (dictation.match_command(text) or ("", ""))[0] == "once":
+                text = self._retranscribe_for_dictation(pcm, text)
+            result = self.handle_text(text, speak=True, source="voice")
             reply: Reply | None = None
             if self.history:
                 reply = self.history[0].get("_reply")
@@ -313,6 +471,7 @@ class VoiceApp:
             self.devices.start()
         control = start_control_server(self, s.control_host, s.control_port)
         threading.Thread(target=self._keepwarm, name="keepwarm", daemon=True).start()
+        threading.Thread(target=self._dictation_worker, name="dictation", daemon=True).start()
         self.mic = MicStream(s.audio_source)
         self.mic.start()
         ring = RingBuffer(1500)
@@ -340,9 +499,28 @@ class VoiceApp:
             state = self.state
             if fired:
                 barge_in = self.speaker.speaking or bool(self.timers.ringing)
+                if state == "dictating":
+                    self.stop_dictation("wake", chime=False, unduck=False)
+                    self._dict_interrupted = True
+                    self._on_wake(ring)
+                    continue
                 if state == "idle" or self.listen_via == "followup" or barge_in:
                     self._on_wake(ring)
                     continue
+            if state == "dictating" and self.endpointer is not None:
+                if self.speaker.speaking:
+                    continue
+                result = self.endpointer.feed(frame)
+                if result.status == "listening":
+                    continue
+                if result.status == "timeout" or result.audio is None:
+                    self.stop_dictation("idle")
+                    continue
+                with self._lock:
+                    if self.dictating:
+                        self._reset_dictation_endpointer()
+                self._dict_queue.put(result.audio)
+                continue
             if state != "listening" or self.endpointer is None:
                 continue
             if self.speaker.speaking:

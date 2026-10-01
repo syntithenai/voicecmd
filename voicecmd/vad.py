@@ -43,7 +43,14 @@ class Endpointer:
         self.max_utterance_ms = max_utterance_ms
         self.reset()
 
-    def reset(self, preroll: np.ndarray | None = None, listen_timeout_ms: int | None = None) -> None:
+    def reset(
+        self,
+        preroll: np.ndarray | None = None,
+        listen_timeout_ms: int | None = None,
+        min_silence_ms: int | None = None,
+        max_utterance_ms: int | None = None,
+    ) -> None:
+        """Overrides apply until the next reset (dictation wants longer pauses and chunks)."""
         self._chunks: list[np.ndarray] = [preroll] if preroll is not None and preroll.size else []
         self._elapsed_ms = 0
         self._speech_ms = 0
@@ -51,6 +58,8 @@ class Endpointer:
         self._silence_ms = 0
         self.started = False
         self._timeout_ms = listen_timeout_ms if listen_timeout_ms is not None else self.listen_timeout_ms
+        self._min_silence = min_silence_ms if min_silence_ms is not None else self.min_silence_ms
+        self._max_utterance = max_utterance_ms if max_utterance_ms is not None else self.max_utterance_ms
         self._speech_start_ms = 0
 
     def is_speech(self, frame20: np.ndarray) -> bool:
@@ -73,9 +82,9 @@ class Endpointer:
                 if self.started:
                     self._silence_ms += VAD_FRAME_MS
 
-            if self.started and self._silence_ms >= self.min_silence_ms:
+            if self.started and self._silence_ms >= self._min_silence:
                 return EndpointResult("done", self._audio())
-            if self.started and self._elapsed_ms - self._speech_start_ms >= self.max_utterance_ms:
+            if self.started and self._elapsed_ms - self._speech_start_ms >= self._max_utterance:
                 return EndpointResult("max", self._audio())
             if not self.started and self._elapsed_ms >= self._timeout_ms:
                 return EndpointResult("timeout")

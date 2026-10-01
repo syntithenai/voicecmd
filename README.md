@@ -73,6 +73,8 @@ Say **"hey Jarvis"**, wait for the chime (or just keep talking), then:
   garden pump", "set the office light to 30 percent", "dim the office light", "turn off the
   lights" (lights only), "is the stereo on", "how much power is the washing machine using".
 - **Clock**: "what time is it", "what's the date".
+- **Dictation** (types into whichever window has focus, e.g. Cursor chat; see below): "dictate let's
+  refactor the router", "start dictation" … "stop dictation".
 - Anything else goes to the LLM (answers in a sentence or two; can also call the tools above, e.g.
   "put on something relaxing", "a timer for a quarter of an hour").
 - "never mind" / "thanks" ends quietly. After a spoken answer the mic stays open for 8 s for a
@@ -101,6 +103,37 @@ unique subset of words ("washing machine"), then fuzzily. If several devices mat
 which one. If nothing matches, the utterance falls through to the music handler and the LLM, so
 "turn off the music" is unaffected. Offline devices get "The X is offline."
 
+## Dictation
+
+Spoken text is typed into the focused window with `ydotool` (`sudo apt install ydotool`). It drives
+`/dev/uinput`, so it works in native Wayland windows on GNOME, where `xdotool` and `wtype` don't; the
+service user must be in the `input` group. ydotool types US key codes, so curly quotes, dashes and
+accents are folded to ASCII first.
+
+- **One-shot**: "hey Jarvis, dictate let's refactor the router" types `let's refactor the router`
+  (Whisper's capitalisation and punctuation, no Enter). Long one-shot sentences are capped by
+  `MAX_UTTERANCE_MS`; use continuous mode for anything longer.
+- **Continuous**: "hey Jarvis, start dictation" (or "start dictating", "dictation mode") chimes, then
+  every pause-separated chunk is typed with a trailing space, no wake word needed. Music is ducked
+  and replies stay silent. While dictating, these utterances on their own are keys, not text:
+
+  | say | does |
+  |---|---|
+  | "new line" | Shift+Enter (plain Enter sends in Cursor chat) |
+  | "new paragraph" | Shift+Enter twice |
+  | "send it" / "submit" / "press enter" | Enter |
+  | "scratch that" | backspaces over the last typed chunk; say it again to keep going back, chunk by chunk (new lines count as chunks). Error chime when there's nothing left; history clears on "send it" |
+  | "stop dictation" / "stop dictating" / "end dictation" | ends dictation (also at the end of a chunk: "… that's it, stop dictation") |
+
+  "hey Jarvis" during dictation ends it and listens for a normal command ("hey Jarvis, stop" just
+  ends it). Dictation also ends after `DICTATE_IDLE_S` without speech.
+- **Keyboard shortcut**: bind a GNOME custom shortcut to
+  `curl -s -X POST -d '{"action":"toggle"}' http://127.0.0.1:10021/dictate`.
+
+Dictation chunks are transcribed with `DICTATE_PROMPT` (prose) instead of the command vocabulary,
+and end after `DICTATE_SILENCE_MS` (900) of silence or `DICTATE_MAX_UTTERANCE_MS` (30 s). Logs show
+`dict: '<transcript>' … action=…` per chunk.
+
 ## CLI
 
 ```bash
@@ -114,7 +147,8 @@ which one. If nothing matches, the utterance falls through to the music handler 
 ```
 
 Control HTTP (loopback only): `GET /health`, `GET /status`, `POST /say {"text"}`,
-`POST /command {"text", "speak"}`, `POST /stop` (silence TTS and ringing alarms).
+`POST /command {"text", "speak"}`, `POST /stop` (silence TTS and ringing alarms),
+`POST /dictate {"action": "start"|"stop"|"toggle"}`, `POST /type {"text"}` (type into the focused window).
 
 ## Model choice
 

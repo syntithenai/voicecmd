@@ -26,7 +26,8 @@ DISMISS_RE = re.compile(
 HELP_RE = re.compile(r"^(?:help|what\s+can\s+you\s+do|what\s+do\s+you\s+do|what\s+are\s+your\s+commands)$")
 HELP_TEXT = (
     "I can play music, pause, skip or change the volume, set timers and alarms, "
-    "and tell you the weather outside. Anything else I'll try to answer."
+    "tell you the weather outside, and type what you say with dictate or start dictation. "
+    "Anything else I'll try to answer."
 )
 
 
